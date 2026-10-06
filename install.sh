@@ -2,7 +2,8 @@
 # Valheim dedicated server installer for Ubuntu 24.04 LTS
 #
 #   sudo ./install.sh                      # fresh random world
-#   sudo ./install.sh --world-file Ginnung.fwl  # world with your own seed (see README)
+#   sudo ./install.sh --world-dir ~/Ginnung      # your world (new folder-style save)
+#   sudo ./install.sh --world-file Ginnung.fwl   # your world (old single-file save)
 #
 # Safe to re-run: it updates config/units and keeps existing worlds.
 set -euo pipefail
@@ -20,9 +21,11 @@ UPDATE_TIME="05:00"     # nightly update+restart, Norwegian time
 BACKUP_KEEP_DAYS=14
 
 WORLD_FILE=""
+WORLD_DIR=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --world-file) WORLD_FILE="$(realpath "$2")"; shift 2 ;;
+    --world-dir)  WORLD_DIR="$(realpath "$2")"; shift 2 ;;
     -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
@@ -31,6 +34,10 @@ done
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 if [[ -n "$WORLD_FILE" ]]; then
   [[ -f "$WORLD_FILE" && "$WORLD_FILE" == *.fwl ]] || { echo "--world-file must be an existing .fwl file" >&2; exit 1; }
+fi
+if [[ -n "$WORLD_DIR" ]]; then
+  [[ -d "$WORLD_DIR" ]] || { echo "--world-dir must be an existing folder" >&2; exit 1; }
+  compgen -G "$WORLD_DIR/*.fwl*" >/dev/null || { echo "$WORLD_DIR doesn't look like a Valheim world (no .fwl2 file)" >&2; exit 1; }
 fi
 
 log() { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
@@ -42,7 +49,10 @@ if [[ -f "$CONF" ]]; then
   source "$CONF"
 else
   log "Server settings"
-  if [[ -n "$WORLD_FILE" ]]; then
+  if [[ -n "$WORLD_DIR" ]]; then
+    WORLD_NAME="$(basename "$WORLD_DIR")"
+    echo "World name taken from folder: $WORLD_NAME"
+  elif [[ -n "$WORLD_FILE" ]]; then
     WORLD_NAME="$(basename "$WORLD_FILE" .fwl)"
     echo "World name taken from file: $WORLD_NAME"
   else
@@ -103,7 +113,18 @@ install -d -o "$VH_USER" -g "$VH_USER" "$BASE_DIR" "$INSTALL_DIR" "$SAVE_DIR" "$
 install -d -o root -g "$VH_USER" -m 750 "$BACKUP_DIR"
 chown root:"$VH_USER" "$CONF_DIR" "$CONF"; chmod 750 "$CONF_DIR"; chmod 640 "$CONF"
 
-# ---------- 4. seeded world ----------
+# ---------- 4. your world ----------
+if [[ -n "$WORLD_DIR" ]]; then
+  dest="$SAVE_DIR/worlds_local/$WORLD_NAME"
+  if [[ -e "$dest" ]]; then
+    echo "A world called $WORLD_NAME already exists on the server - not overwriting it."
+  else
+    cp -r "$WORLD_DIR" "$dest"
+    rm -f "$dest"/cacheMinimap*          # client-only map cache
+    chown -R "$VH_USER:$VH_USER" "$dest"
+    echo "Copied your world to $dest"
+  fi
+fi
 if [[ -n "$WORLD_FILE" ]]; then
   dest="$SAVE_DIR/worlds_local/$WORLD_NAME.fwl"
   if [[ -f "$SAVE_DIR/worlds_local/$WORLD_NAME.db" ]]; then
